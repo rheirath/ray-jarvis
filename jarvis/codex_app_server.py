@@ -168,6 +168,7 @@ _ALLOWED_SUBSCRIPTION_HOME_ENTRIES: Final = frozenset(
     {
         "auth.json",
         "installation_id",
+        "models_cache.json",  # Native model metadata, validated below.
         # Codex 0.146 writes this tiny one-time migration marker into its
         # CODEX_HOME on a normal run. Without it in the allowlist the
         # fail-closed profile check bricked every install right after the
@@ -937,11 +938,44 @@ def _validate_arg0_runtime_dir(
             )
 
 
+def _validate_models_cache(path: Path) -> None:
+    """Accept Codex's bounded native catalog, never configuration or links."""
+    _validate_regular_private_file(path)
+    try:
+        metadata = path.stat()
+        if metadata.st_size > 2 * 1024 * 1024:
+            raise ValueError("oversized model cache")
+        if os.name == "posix" and stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise ValueError("writable model cache")
+        cache = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict) or set(cache) != {
+            "fetched_at", "etag", "client_version", "models"
+        }:
+            raise ValueError("invalid cache shape")
+        if not isinstance(cache["fetched_at"], str) or not isinstance(cache["client_version"], str):
+            raise ValueError("invalid cache metadata")
+        if cache["etag"] is not None and not isinstance(cache["etag"], str):
+            raise ValueError("invalid cache etag")
+        models = cache["models"]
+        if not isinstance(models, list) or len(models) > 512:
+            raise ValueError("invalid model list")
+        if any(not isinstance(model, dict) or not isinstance(model.get("slug"), str)
+               or not model["slug"] for model in models):
+            raise ValueError("invalid model entry")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CodexSubscriptionUnavailable(
+            "The dedicated Codex voice profile contains an invalid model cache."
+        ) from exc
+
+
 def _validate_codex_runtime_state(
     home: Path,
     *,
     trusted_binary_path: str | None = None,
 ) -> None:
+    cache = home / "models_cache.json"
+    if cache.exists() or cache.is_symlink():
+        _validate_models_cache(cache)
     installation_id = home / "installation_id"
     if installation_id.exists() or installation_id.is_symlink():
         _validate_regular_private_file(installation_id)
@@ -2670,7 +2704,11 @@ class CodexAppServerClient:
                     "version": __version__,
                 },
                 "capabilities": {
-                    "experimentalApi": self._purpose == "realtime",
+                    # Text uses stable methods, but pinned Codex releases gate the
+                    # explicit empty capability/environment roots and disabled
+                    # model fallback behind this protocol capability too.
+                    # Runtime tools and realtime remain separately disabled.
+                    "experimentalApi": True,
                     "mcpServerOpenaiFormElicitation": False,
                     "requestAttestation": False,
                 },
@@ -2927,7 +2965,7 @@ class CodexAppServerClient:
             ("log_dir",): self._log_dir(),
             ("model_instructions_file",): self._safe_instructions_file(),
             ("notify",): [],
-            ("openai_base_url",): _OFFICIAL_OPENAI_API_BASE,
+            ("openai_base_url",): self._model_request_base_url(),
             ("orchestrator", "mcp", "enabled"): False,
             ("orchestrator", "skills", "enabled"): False,
             ("otel", "exporter"): "none",
@@ -3098,7 +3136,7 @@ class CodexAppServerClient:
                 "-c",
                 "notify=[]",
                 "-c",
-                'openai_base_url="https://api.openai.com/v1"',
+                f"openai_base_url={json.dumps(self._model_request_base_url())}",
                 "-c",
                 'chatgpt_base_url="https://chatgpt.com/backend-api/"',
                 "-c",
@@ -3558,6 +3596,16 @@ class CodexAppServerClient:
         if not subscribers:
             self._subscriptions.pop(subscription.thread_id, None)
 
+    def _model_request_base_url(self) -> str:
+        # Codex treats an explicit openai_base_url as a provider override even
+        # for ChatGPT auth. Text must target the subscription endpoint; an
+        # OAuth token sent to the API endpoint is rejected with HTTP 401.
+        return (
+            _OFFICIAL_CHATGPT_CODEX_BASE
+            if self._purpose == "text"
+            else _OFFICIAL_OPENAI_API_BASE
+        )
+
     def _safe_thread_cwd(self) -> str:
         if self._workspace is None:
             raise CodexSubscriptionUnavailable(
@@ -3652,14 +3700,15 @@ class CodexAppServerClient:
         model_ok = (
             isinstance(response_model, str)
             and bool(response_model)
-            and isinstance(thread_model, str)
-            and bool(thread_model)
+            # Codex 0.147 reports the selected model on ThreadStartResponse,
+            # not on its nested Thread. Validate an optional echo if present.
+            and (not isinstance(thread, Mapping) or "model" not in thread
+                 or thread_model == response_model)
         )
         if expected_model:
             model_ok = (
                 model_ok
                 and response_model == expected_model
-                and thread_model == expected_model
             )
         if (
             not isinstance(thread, Mapping)
@@ -3723,7 +3772,7 @@ class CodexAppServerClient:
             "model_instructions_file": self._safe_instructions_file(),
             "model_provider": _TEXT_MODEL_PROVIDER,
             "notify": [],
-            "openai_base_url": _OFFICIAL_OPENAI_API_BASE,
+            "openai_base_url": self._model_request_base_url(),
             "orchestrator": {
                 "mcp": {"enabled": False},
                 "skills": {"enabled": False},
