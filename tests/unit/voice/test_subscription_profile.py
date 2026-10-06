@@ -131,7 +131,7 @@ async def test_conversation_turns_stream_through_subscription_with_history() -> 
 
 
 @pytest.mark.asyncio
-async def test_subscription_failure_before_first_delta_uses_provider_chain() -> None:
+async def test_subscription_failure_never_uses_provider_chain() -> None:
     delegated = []
 
     class Subscription:
@@ -155,10 +155,10 @@ async def test_subscription_failure_before_first_delta_uses_provider_chain() -> 
     brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
     brain._subscription = Subscription()
 
-    result = [chunk async for chunk in brain.generate_stream("Tell me a short joke.")]
-
-    assert result == ["Fallback answer."]
-    assert delegated == ["Tell me a short joke."]
+    with pytest.raises(RuntimeError, match="subscription transport is busy"):
+        await brain.generate("Tell me a short joke.")
+    assert delegated == []
+    assert brain._last_turn_all_failed is True
 
 
 @pytest.mark.asyncio
@@ -221,3 +221,38 @@ async def test_action_turns_keep_the_existing_orchestrator() -> None:
     assert result == ["Done."]
     assert delegated == ["Open Chrome now."]
     assert brain._last_turn_executed_action_tool is True
+
+
+@pytest.mark.asyncio
+async def test_spoken_salutation_stays_on_subscription_and_preserves_prompt():
+    requests = []
+    class Subscription:
+        async def complete(self, request):
+            requests.append(request)
+            yield BrainDelta(content="Hello, Ray!")
+    class Delegate:
+        @staticmethod
+        def _turn_has_action_intent(text):
+            return False
+        async def generate_stream(self, *args, **kwargs):
+            pytest.fail("A salutation must not reach the API router")
+            yield ""
+    brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
+    brain._subscription = Subscription()
+    text = "Hello, Jarvis. Say hello to Ray."
+    assert await brain.generate(text) == "Hello, Ray!"
+    assert requests[0].messages[-1].content == text
+    assert await brain.generate("Say that again.") == "Hello, Ray!"
+
+
+@pytest.mark.asyncio
+async def test_salutation_does_not_hide_a_local_state_request():
+    delegated = []
+    class Delegate:
+        async def generate_stream(self, text, **kwargs):
+            delegated.append(text)
+            yield "Local state inspected."
+    brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
+    text = "Hello, Jarvis. Which plugins are installed?"
+    assert await brain.generate(text) == "Local state inspected."
+    assert delegated == [text]
