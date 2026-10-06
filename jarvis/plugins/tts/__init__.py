@@ -765,6 +765,15 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             speed=tts_cfg.speed,
         )
 
+    if provider == "kokoro-local":
+        from jarvis.plugins.tts.kokoro_local import KokoroLocalTTS
+
+        return KokoroLocalTTS(
+            model_dir=tts_cfg.model or None,
+            voice=getattr(tts_cfg, "voice_en", "") or "am_michael",
+            speed=tts_cfg.speed,
+        )
+
     if provider in ("piper-local", "piper"):
         try:
             from jarvis.plugins.tts.piper_local import PiperLocalTTS

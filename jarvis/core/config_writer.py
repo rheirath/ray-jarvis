@@ -2040,6 +2040,10 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "",
         "language_code": "auto",
     },
+    "kokoro-local": {
+        "model": "", "voice_de": "am_michael", "voice_en": "am_michael",
+        "language_code": "en-US",
+    },
     "piper-local": {
         # ``language_code`` is the load-bearing key here, not the voices. A Piper
         # voice is MONOLINGUAL: the plugin is handed the turn's resolved language
@@ -2067,6 +2071,7 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
 # new provider, we overwrite with the provider default. Kept in sync with
 # `jarvis/plugins/tts/__init__.py`.
 _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
+    "kokoro-local": frozenset({"am_michael"}),
     # Every catalogued local Piper voice, not only the two the installer fetches
     # by default. Without this entry a switch to Piper would reset the voice to
     # the default pair every time, silently undoing a user who downloaded Ramona
