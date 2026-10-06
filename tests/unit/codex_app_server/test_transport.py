@@ -216,7 +216,7 @@ def _default_responder(process: FakeProcess, message: dict[str, Any]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_text_transport_uses_stable_app_server_without_realtime_flags(
+async def test_text_transport_negotiates_safety_fields_without_realtime_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = SpawnHarness(monkeypatch)
@@ -230,9 +230,11 @@ async def test_text_transport_uses_stable_app_server_without_realtime_flags(
     assert "--enable\nrealtime_conversation" not in argv_text
     assert "experimental_realtime_" not in argv_text
     assert f'model_provider="{transport._TEXT_MODEL_PROVIDER}"' in argv
+    assert 'openai_base_url="https://chatgpt.com/backend-api/codex"' in argv
+    assert 'openai_base_url="https://api.openai.com/v1"' not in argv
     assert client._sink_server is None
     initialize = harness.processes[0].stdin.messages[0]
-    assert initialize["params"]["capabilities"]["experimentalApi"] is False
+    assert initialize["params"]["capabilities"]["experimentalApi"] is True
 
     await client.close()
 
@@ -257,6 +259,7 @@ async def test_text_thread_is_ephemeral_read_only_and_uses_managed_model(
     assert "model" not in params
     assert params["ephemeral"] is True
     assert params["sandbox"] == "read-only"
+    assert params["config"]["openai_base_url"] == transport._OFFICIAL_CHATGPT_CODEX_BASE
     assert params["dynamicTools"] is None
     assert params["runtimeWorkspaceRoots"] == []
     assert params["config"]["features"]["realtime_conversation"] is False
@@ -3718,3 +3721,58 @@ async def test_atomic_logout_transfers_live_transport_lock_without_a_gap(
     assert observations == ["deleted"]
     assert profile_lock.closed is True
     assert transport._subscription_profile_mutating is False
+
+
+@pytest.mark.parametrize("mutation", [None, "missing_model", "wrong_model", "network", "writable", "model_echo"])
+def test_text_boundary_matches_pinned_cli_response_schema(tmp_path: Path, mutation: str | None) -> None:
+    client = CodexAppServerClient(purpose="text")
+    client._workspace = SimpleNamespace(root=tmp_path)
+    result = {
+        "thread": {"id": "test", "ephemeral": True,
+                   "modelProvider": transport._TEXT_MODEL_PROVIDER, "cwd": str(tmp_path)},
+        "model": "test-model", "modelProvider": transport._TEXT_MODEL_PROVIDER,
+        "cwd": str(tmp_path), "approvalPolicy": "never",
+        "sandbox": {"type": "readOnly", "networkAccess": False},
+    }
+    if mutation == "missing_model":
+        del result["model"]
+    elif mutation == "wrong_model":
+        result["model"] = "other-model"
+    elif mutation == "network":
+        result["sandbox"]["networkAccess"] = True
+    elif mutation == "writable":
+        result["sandbox"]["type"] = "workspaceWrite"
+    elif mutation == "model_echo":
+        result["thread"]["model"] = "other-model"
+    if mutation is None:
+        client._audit_text_thread_start_response(result, expected_model="test-model")
+    else:
+        with pytest.raises(CodexSubscriptionUnavailable):
+            client._audit_text_thread_start_response(result, expected_model="test-model")
+
+
+@pytest.mark.parametrize("mutation", [None, "config", "symlink", "writable", "invalid_model", "oversized"])
+def test_native_model_cache_is_bounded_data(tmp_path: Path, mutation: str | None) -> None:
+    path = tmp_path / "models_cache.json"
+    cache = {"fetched_at": "2026-10-06T00:00:00Z", "etag": None,
+             "client_version": "0.147.0", "models": [{"slug": "test-model"}]}
+    if mutation == "config":
+        cache["mcp_servers"] = {}
+    elif mutation == "invalid_model":
+        cache["models"] = ["not-a-model"]
+    path.write_text(json.dumps(cache), encoding="utf-8")
+    if mutation == "symlink":
+        target = tmp_path / "target.json"
+        path.rename(target)
+        path.symlink_to(target)
+    elif mutation == "writable":
+        if os.name != "posix":
+            pytest.skip("POSIX mode check")
+        path.chmod(0o666)
+    elif mutation == "oversized":
+        path.write_text(" " * (2 * 1024 * 1024 + 1), encoding="utf-8")
+    if mutation is None:
+        transport._validate_models_cache(path)
+    else:
+        with pytest.raises(CodexSubscriptionUnavailable):
+            transport._validate_models_cache(path)
