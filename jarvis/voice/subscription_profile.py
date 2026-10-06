@@ -9,6 +9,7 @@ follow-up listening, and interruption on Windows, macOS, and Linux.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
@@ -25,6 +26,16 @@ LEGACY_CODEX_REALTIME_PROVIDER = "codex-subscription-realtime"
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 _MAX_HISTORY_MESSAGES = 6
 _SUPPORTED_DESKTOP_PLATFORMS = frozenset({"win32", "darwin", "linux"})
+
+# An explicit salutation addresses the assistant; it is not evidence about
+# the installed application. Preserve the remaining request for all routing
+# checks, and preserve the original utterance in the model conversation.
+_SALUTATION = re.compile(r"^\s*(?:hello|hey|hi)[\s,]+jarvis\b[\s,.!?:;-]*", re.IGNORECASE)
+
+
+def _routing_text(text: str) -> str:
+    return _SALUTATION.sub("", text, count=1).strip() or "Hello."
+
 
 log = logging.getLogger(__name__)
 
@@ -206,13 +217,14 @@ class CodexSubscriptionVoiceBrain:
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         context = tuple(
-            str(message.content)
+            _routing_text(str(message.content))
             for message in self._history[-_MAX_HISTORY_MESSAGES:]
             if isinstance(message.content, str)
         )
-        turn_plan = plan_turn(text, context=context)
+        routing_text = _routing_text(text)
+        turn_plan = plan_turn(routing_text, context=context)
         action_detector = getattr(self._delegate, "_turn_has_action_intent", None)
-        detected_action = bool(action_detector(text)) if callable(action_detector) else False
+        detected_action = bool(action_detector(routing_text)) if callable(action_detector) else False
         delegate_turn = turn_plan.requires_orchestrator
         if turn_plan.reasons == frozenset({TurnReason.ACTION}):
             if callable(action_detector):
@@ -262,22 +274,10 @@ class CodexSubscriptionVoiceBrain:
                 if delta.content:
                     answer_parts.append(delta.content)
                     yield delta.content
-        except Exception as exc:  # noqa: BLE001 - cross-family fallback boundary
-            if answer_parts:
-                raise
-            log.warning(
-                "Subscription voice transport failed before emitting an answer; "
-                "delegating the turn to the configured provider chain: %s",
-                exc,
-                exc_info=True,
-            )
-            async for chunk in self._stream_delegate_turn(
-                text,
-                on_progress=on_progress,
-                **kwargs,
-            ):
-                yield chunk
-            return
+        except Exception:  # The selected subscription must never cross to an API.
+            self._last_turn_all_failed = True
+            log.warning("Subscription voice transport failed; no API fallback attempted.")
+            raise
 
         answer = "".join(answer_parts).strip()
         if answer:
