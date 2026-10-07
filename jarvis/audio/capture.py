@@ -1136,7 +1136,7 @@ class MicrophoneCapture:
                             raise
                         return opened
 
-                stream = await asyncio.to_thread(
+                stream = await self._owned_native_open(
                     _guarded_open, attempt, capture_rate, capture_blocksize
                 )
                 self._stream = stream
@@ -1430,6 +1430,32 @@ class MicrophoneCapture:
             self._last_chunk_monotonic,
             time.monotonic() - self._STALL_THRESHOLD_S - 1.0,
         )
+
+    async def _owned_native_open(self, opener: Any, *args: Any) -> Any:
+        """Keep a cancelled open's callback alive until its stream is closed.
+
+        Cancelling to_thread does not stop the native open. Dropping its result
+        can free the CFFI callback while PortAudio still calls it. The shielded
+        worker retains ownership and closes a late result on cancellation.
+        """
+        worker = asyncio.create_task(asyncio.to_thread(opener, *args))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            def close_late_result(done: asyncio.Task) -> None:
+                if done.cancelled():
+                    return
+                try:
+                    stream = done.result()
+                except Exception as exc:  # Native open failed; no stream to own.
+                    _log.debug("Cancelled mic open failed: {}", exc)
+                    return
+                cleanup = asyncio.create_task(self._discard_stream_off_loop(stream))
+                cleanup.add_done_callback(
+                    lambda task: task.exception() if not task.cancelled() else None
+                )
+            worker.add_done_callback(close_late_result)
+            raise
 
     #: How long a coroutine waits for a native stream to shut down before it
     #: leaves the rest to a worker thread. Long enough that the ordinary close
