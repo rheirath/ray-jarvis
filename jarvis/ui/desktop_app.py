@@ -2420,6 +2420,12 @@ class DesktopApp:
                 self._pending_skill_notes: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
             @property
+            def _turn_has_action_intent(self) -> Any:
+                # The subscription composition needs the resolved brain's
+                # detector, not the planner's broad verb-only fallback.
+                return getattr(brain_holder["brain"], "_turn_has_action_intent", None)
+
+            @property
             def active_provider(self) -> str:
                 brain = brain_holder["brain"]
                 return str(getattr(brain, "active_provider", "starting"))
