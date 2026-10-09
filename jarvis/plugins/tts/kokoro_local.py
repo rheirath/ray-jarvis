@@ -35,6 +35,7 @@ class KokoroLocalTTS:
         self.timeout_s = timeout_s
         self._engine_factory = engine_factory
         self._state = _EngineState()
+        self._synthesis_lock = asyncio.Lock()
 
     def _load_engine(self):
         if self._engine_factory is not None:
@@ -98,16 +99,17 @@ class KokoroLocalTTS:
         if not selected_voice.startswith(("af_", "am_", "bf_", "bm_")):
             raise ValueError("Select an English Kokoro voice")
         language = "en-gb" if selected_voice.startswith(("bf_", "bm_")) else "en-us"
-        state = self._state
-        try:
-            chunk = await asyncio.wait_for(
-                asyncio.to_thread(self._render, state, text, selected_voice, language),
-                timeout=self.timeout_s,
-            )
-        except (TimeoutError, asyncio.CancelledError):
-            if self._state is state:
-                self.recover()
-            raise
+        async with self._synthesis_lock:
+            state = self._state
+            try:
+                chunk = await asyncio.wait_for(
+                    asyncio.to_thread(self._render, state, text, selected_voice, language),
+                    timeout=self.timeout_s,
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                if self._state is state:
+                    self.recover()
+                raise
         self.last_voice = selected_voice
         self.last_voice_provider = self.name
         yield chunk
