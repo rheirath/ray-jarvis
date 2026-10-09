@@ -3324,6 +3324,8 @@ class VoiceConfig(BaseModel):
     # the earlier half as a fresh, context-less message. Master switch; false =
     # behaves exactly as before this feature. Spec:
     # docs/superpowers/specs/2026-06-16-voice-continuation-recombine-while-thinking-design.md
+    # Disable on speaker/microphone setups that mistake speaker echo for speech.
+    barge_in_enabled: bool = True
     continuation_interrupt_enabled: bool = True
     # How long AFTER the answer finished a new utterance still counts as a
     # continuation (the "kurze Nachfrist"). Kept short to bound the risk that a
