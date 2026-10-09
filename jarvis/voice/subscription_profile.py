@@ -216,6 +216,19 @@ class CodexSubscriptionVoiceBrain:
         on_progress: Any | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
+        from jarvis.voice.weather import answer_weather, weather_request
+
+        weather = weather_request(text)
+        if weather is not None:
+            answer = await answer_weather(self._delegate, weather, text)
+            self._last_turn_all_failed = False
+            self._last_turn_suppressed = False
+            self._last_turn_executed_action_tool = False
+            self._history.extend([BrainMessage("user", text), BrainMessage("assistant", answer)])
+            self._history = self._history[-_MAX_HISTORY_MESSAGES:]
+            yield answer
+            return
+
         context = tuple(
             _routing_text(str(message.content))
             for message in self._history[-_MAX_HISTORY_MESSAGES:]
