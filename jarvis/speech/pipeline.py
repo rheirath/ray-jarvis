@@ -18520,6 +18520,10 @@ class SpeechPipeline:
         ~120 ms playback write batches on slow CPUs (BUG-062 cause #2 —
         constant stutter / multi-second pauses on the Intel-Mac test machine).
         """
+        voice_cfg = getattr(getattr(self, "_config", None), "voice", None)
+        if not getattr(voice_cfg, "barge_in_enabled", True):
+            return False
+
         from jarvis.realtime.desktop import DesktopRealtimeBargeInDetector
 
         detector = DesktopRealtimeBargeInDetector(
