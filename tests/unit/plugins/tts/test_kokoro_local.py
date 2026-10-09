@@ -94,3 +94,21 @@ def test_warmup_reuses_engine_and_does_not_block_active_call():
         provider._ensure_client()
     finally:
         provider._state.lock.release()
+
+@pytest.mark.asyncio
+async def test_overlapping_sentences_are_serialized():
+    import time
+    class Measured(Engine):
+        active = 0
+        peak = 0
+        def create(self, text, **kwargs):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            time.sleep(0.02)
+            self.active -= 1
+            return super().create(text, **kwargs)
+    engine = Measured()
+    provider = KokoroLocalTTS(engine_factory=lambda: engine)
+    results = await asyncio.gather(collect(provider), collect(provider))
+    assert all(len(result) == 1 for result in results)
+    assert engine.peak == 1
