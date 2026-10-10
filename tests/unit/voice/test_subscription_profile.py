@@ -226,3 +226,25 @@ async def test_salutation_preserves_local_state_request_without_api_fallback():
     await brain.generate(text)
     assert requests[0].messages[-1].content == text
     assert "do not invent results" in requests[0].system
+
+@pytest.mark.asyncio
+async def test_clock_is_refreshed_for_each_subscription_turn(monkeypatch):
+    from datetime import datetime, timezone
+    class Clock:
+        value=10
+        @classmethod
+        def now(cls):
+            return datetime(2026,10,10,cls.value,30)
+    monkeypatch.setattr('jarvis.voice.subscription_profile.datetime',Clock)
+    requests=[]
+    class Subscription:
+        async def complete(self,request):
+            requests.append(request)
+            yield BrainDelta(content='The time is available.')
+    brain=CodexSubscriptionVoiceBrain(SimpleNamespace(),_config())
+    brain._subscription=Subscription()
+    await brain.generate('Goedenavond. Hoe laat is het nu?')
+    Clock.value=11
+    await brain.generate('En nu?')
+    assert 'T10:30:00' in requests[0].system
+    assert 'T11:30:00' in requests[1].system
