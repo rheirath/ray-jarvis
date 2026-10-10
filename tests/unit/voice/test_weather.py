@@ -8,6 +8,10 @@ from jarvis.voice.subscription_profile import CodexSubscriptionVoiceBrain
  ('here. Okay, what is the weather today in Rotterdam?', {'city':'Rotterdam','day':'today'}),
  ('What is the weather in New York tomorrow?', {'city':'New York','day':'tomorrow'}),
  ('What is the weather tomorrow in London?', {'city':'London','day':'tomorrow'}),
+ ('What will the weather be tomorrow in Rotterdam?', {'city':'Rotterdam','day':'tomorrow'}),
+ ('How will the weather be in Rotterdam tomorrow?', {'city':'Rotterdam','day':'tomorrow'}),
+ ('What will the weather be like tomorrow in Rotterdam?', {'city':'Rotterdam','day':'tomorrow'}),
+ ('What will the weather be in Rotterdam next week?', None),
  ('What is the weather in Rotterdam next week?', None),
  ('Send the weather to Ray', None), ('What is the weather at home?', None),
 ])
@@ -36,7 +40,11 @@ async def test_bad_measurements_fail_honestly(monkeypatch):
     assert not (await weather.DailyWeather().execute({'city':'Rotterdam','day':'today'},None)).success
 
 @pytest.mark.asyncio
-async def test_weather_uses_executor_and_neither_model():
+@pytest.mark.parametrize('question,day', [
+    ('What is the weather today in Rotterdam?', 'today'),
+    ('What will the weather be tomorrow in Rotterdam?', 'tomorrow'),
+])
+async def test_weather_uses_executor_and_neither_model(question, day):
     calls=[]
     class Executor:
         async def execute(self,tool,args,**kwargs):
@@ -48,8 +56,8 @@ async def test_weather_uses_executor_and_neither_model():
             pytest.fail('No API model should be used')
             yield ''
     brain=CodexSubscriptionVoiceBrain(Delegate(),SimpleNamespace())
-    assert await brain.generate('What is the weather today in Rotterdam?')=='Source-backed weather answer.'
-    assert calls==[('daily_weather',{'city':'Rotterdam','day':'today'})]
+    assert await brain.generate(question)=='Source-backed weather answer.'
+    assert calls==[('daily_weather',{'city':'Rotterdam','day':day})]
 
 @pytest.mark.asyncio
 async def test_missing_executor_does_not_request_api_key():
