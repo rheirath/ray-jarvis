@@ -2715,7 +2715,13 @@ class SpeechPipeline:
         # False when it is INCOMPLETE-classified (long wait, silent discard
         # on timeout). Drives the branch in _completion_timeout_fire.
         self._buffer_is_complete: bool = False
-        self._stt_final_timeout_s = stt_final_timeout_s
+        # Local CPU inference includes cold model loading and can exceed the
+        # network-oriented eight-second default even on a short utterance.
+        self._stt_final_timeout_s = (
+            max(stt_final_timeout_s, 30.0)
+            if getattr(self._utterance_stt, "runs_on_device", False)
+            else stt_final_timeout_s
+        )
         self._brain_timeout_s = max(1.0, float(brain_timeout_s))
         # Stall guard (see _run_brain_with_stall_guard). Ceiling is clamped to be
         # >= the stall window so the two never invert.
