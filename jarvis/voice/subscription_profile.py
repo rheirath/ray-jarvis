@@ -139,9 +139,9 @@ def subscription_language_directive(language: str) -> str:
 class CodexSubscriptionVoiceBrain:
     """Route conversational voice turns to the subscription text transport.
 
-    Tool, private-data, current-data, and local-state turns remain on the
-    existing BrainManager.  That preserves the complete Jarvis tool contract;
-    the read-only subscription transport never guesses that an action happened.
+    Weather uses the explicit safe executor route. Other turns use only the
+    subscription text transport, with explicit limits on actions and evidence.
+    Selecting this profile must never enter an API-backed provider chain.
     """
 
     def __init__(self, delegate: Any, config: object) -> None:
@@ -168,46 +168,6 @@ class CodexSubscriptionVoiceBrain:
 
     async def generate(self, text: str, **kwargs: Any) -> str:
         return "".join([chunk async for chunk in self.generate_stream(text, **kwargs)])
-
-    async def _stream_delegate_turn(
-        self,
-        text: str,
-        *,
-        on_progress: Any | None,
-        **kwargs: Any,
-    ) -> AsyncIterator[str]:
-        delegated_parts: list[str] = []
-        try:
-            async for chunk in self._delegate.generate_stream(
-                text,
-                on_progress=on_progress,
-                **kwargs,
-            ):
-                delegated_parts.append(chunk)
-                yield chunk
-        finally:
-            self._last_turn_all_failed = bool(
-                getattr(self._delegate, "_last_turn_all_failed", False)
-            )
-            self._last_turn_suppressed = bool(
-                getattr(self._delegate, "_last_turn_suppressed", False)
-            )
-            self._last_turn_executed_action_tool = bool(
-                getattr(
-                    self._delegate,
-                    "_last_turn_executed_action_tool",
-                    False,
-                )
-            )
-            delegated_answer = "".join(delegated_parts).strip()
-            if delegated_answer:
-                self._history.extend(
-                    [
-                        BrainMessage("user", text),
-                        BrainMessage("assistant", delegated_answer),
-                    ]
-                )
-                self._history = self._history[-_MAX_HISTORY_MESSAGES:]
 
     async def generate_stream(
         self,
@@ -250,15 +210,6 @@ class CodexSubscriptionVoiceBrain:
             # read-only subscription talker, even if their phrasing was not in
             # the planner's generic action vocabulary.
             delegate_turn = True
-        if delegate_turn:
-            async for chunk in self._stream_delegate_turn(
-                text,
-                on_progress=on_progress,
-                **kwargs,
-            ):
-                yield chunk
-            return
-
         self._last_turn_all_failed = False
         self._last_turn_suppressed = False
         self._last_turn_executed_action_tool = False
@@ -276,7 +227,16 @@ class CodexSubscriptionVoiceBrain:
         messages = tuple([*self._history[-_MAX_HISTORY_MESSAGES:], BrainMessage("user", text)])
         request = BrainRequest(
             messages=messages,
-            system=subscription_language_directive(language),
+            system=subscription_language_directive(language) + (
+                " You are Jarvis, using the connected ChatGPT subscription. "
+                "This turn is text-only: you cannot execute actions, inspect the device, "
+                "read private data, or search live information. Never claim you did so. "
+                "Do not ask for an API key. For an unclear request, ask one short "
+                "clarifying question. For an unavailable operation, briefly explain "
+                "the specific limitation and offer instructions or a draft instead."
+                + (" This request may need tools or fresh evidence; do not invent results."
+                   if delegate_turn else "")
+            ),
             stream=True,
         )
         answer_parts: list[str] = []

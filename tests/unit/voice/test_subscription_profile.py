@@ -162,65 +162,29 @@ async def test_subscription_failure_never_uses_provider_chain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_registered_action_overrides_a_native_conversation_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    delegated = []
-
+@pytest.mark.parametrize("text", [
+    "I do this.", "Open Chrome now.", "Use the connected service for this request.",
+    "Which plugins are installed?", "What is the latest news?", "Read my email.",
+])
+async def test_subscription_profile_never_enters_api_action_chain(text):
+    requests = []
     class Delegate:
-        _last_turn_all_failed = False
-        _last_turn_suppressed = False
-        _last_turn_executed_action_tool = True
-
-        @staticmethod
-        def _turn_has_action_intent(_text: str) -> bool:
+        def _turn_has_action_intent(self, text):
             return True
-
-        async def generate_stream(self, text, **_kwargs):
-            delegated.append(text)
-            yield "Action completed."
-
-    monkeypatch.setattr(
-        "jarvis.voice.subscription_profile.plan_turn",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            requires_orchestrator=False,
-            reasons=frozenset(),
-        ),
-    )
+        async def generate_stream(self, *args, **kwargs):
+            pytest.fail("Subscription profile must never enter the API chain")
+            yield ""
+    class Subscription:
+        async def complete(self, request):
+            requests.append(request)
+            yield BrainDelta(content="Could you clarify what you mean?")
     brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
-
-    result = [
-        chunk
-        async for chunk in brain.generate_stream("Use the connected service for this request.")
-    ]
-
-    assert result == ["Action completed."]
-    assert delegated == ["Use the connected service for this request."]
-
-
-@pytest.mark.asyncio
-async def test_action_turns_keep_the_existing_orchestrator() -> None:
-    delegated = []
-
-    class Delegate:
-        _last_turn_all_failed = False
-        _last_turn_suppressed = False
-        _last_turn_executed_action_tool = True
-
-        @staticmethod
-        def _turn_has_action_intent(_text: str) -> bool:
-            return True
-
-        async def generate_stream(self, text, **_kwargs):
-            delegated.append(text)
-            yield "Done."
-
-    brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
-    result = [chunk async for chunk in brain.generate_stream("Open Chrome now.")]
-
-    assert result == ["Done."]
-    assert delegated == ["Open Chrome now."]
-    assert brain._last_turn_executed_action_tool is True
+    brain._subscription = Subscription()
+    assert await brain.generate(text) == "Could you clarify what you mean?"
+    assert requests[0].messages[-1].content == text
+    assert "cannot execute actions" in requests[0].system
+    assert "Do not ask for an API key" in requests[0].system
+    assert not brain._last_turn_executed_action_tool
 
 
 @pytest.mark.asyncio
@@ -246,13 +210,19 @@ async def test_spoken_salutation_stays_on_subscription_and_preserves_prompt():
 
 
 @pytest.mark.asyncio
-async def test_salutation_does_not_hide_a_local_state_request():
-    delegated = []
+async def test_salutation_preserves_local_state_request_without_api_fallback():
+    requests = []
     class Delegate:
         async def generate_stream(self, text, **kwargs):
-            delegated.append(text)
-            yield "Local state inspected."
+            pytest.fail("Local-state requests must not cross to a paid API")
+            yield ""
+    class Subscription:
+        async def complete(self, request):
+            requests.append(request)
+            yield BrainDelta(content="I cannot inspect installed plugins in this voice mode.")
     brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
+    brain._subscription = Subscription()
     text = "Hello, Jarvis. Which plugins are installed?"
-    assert await brain.generate(text) == "Local state inspected."
-    assert delegated == [text]
+    await brain.generate(text)
+    assert requests[0].messages[-1].content == text
+    assert "do not invent results" in requests[0].system
