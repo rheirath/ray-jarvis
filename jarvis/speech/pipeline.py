@@ -2524,9 +2524,9 @@ class SpeechPipeline:
                 resolved = build_stt_from_config(config.stt)
                 # Swap in the resolved provider when it differs from the local
                 # instance — or whenever there is no local instance at all.
-                if resolved is not self._stt and (
-                    self._stt is None or type(resolved) is not type(self._stt)
-                ):
+                # Separate instances of the same native provider are intentional:
+                # previews must not occupy the final transcription engine.
+                if resolved is not self._stt:
                     self._utterance_stt = resolved
                     log.info(
                         "Utterance-STT provider resolved: %s (wake stays local)",
