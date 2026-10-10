@@ -23,3 +23,12 @@ def test_final_provider_keeps_configured_instance(monkeypatch,same_class):
     assert instance._utterance_stt is final
     assert instance._stt is wake
     assert instance._utterance_stt is not instance._stt
+
+@pytest.mark.parametrize('local,requested,expected',[(True,8,30),(False,8,8),(True,45,45)])
+def test_local_timeout_budget(local,requested,expected):
+    path=Path(__file__).resolve().parents[3]/'jarvis/speech/pipeline.py'
+    tree=ast.parse(path.read_text())
+    assignment=next(n for n in ast.walk(tree) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Attribute) and t.attr=='_stt_final_timeout_s' for t in n.targets))
+    instance=SimpleNamespace(_utterance_stt=SimpleNamespace(runs_on_device=local))
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[assignment],type_ignores=[])),str(path),'exec'),{'self':instance,'stt_final_timeout_s':requested})
+    assert instance._stt_final_timeout_s==expected
