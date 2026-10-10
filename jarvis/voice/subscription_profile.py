@@ -8,6 +8,7 @@ follow-up listening, and interruption on Windows, macOS, and Linux.
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import re
 import sys
@@ -152,6 +153,7 @@ class CodexSubscriptionVoiceBrain:
             persistent_subscription_transport=True,
         )
         self._history: list[BrainMessage] = []
+        self._pending_weather_day: str | None = None
         self._conversation_language = ""
         self._last_turn_all_failed = False
         self._last_turn_suppressed = False
@@ -176,9 +178,27 @@ class CodexSubscriptionVoiceBrain:
         on_progress: Any | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        from jarvis.voice.weather import answer_weather, weather_request
+        from jarvis.voice.weather import answer_weather, weather_request, weather_without_city, weather_city_reply
 
         weather = weather_request(text)
+        pending_day = self._pending_weather_day
+        self._pending_weather_day = None
+        if weather is None and pending_day:
+            city = weather_city_reply(text)
+            if city:
+                weather = {"city": city, "day": pending_day}
+        if weather is None:
+            incomplete = weather_without_city(text)
+            if incomplete:
+                self._pending_weather_day = incomplete["day"]
+                answer = "Which city would you like the weather forecast for?"
+                self._history.extend([BrainMessage("user", text), BrainMessage("assistant", answer)])
+                self._history = self._history[-_MAX_HISTORY_MESSAGES:]
+                self._last_turn_all_failed = False
+                self._last_turn_suppressed = False
+                self._last_turn_executed_action_tool = False
+                yield answer
+                return
         if weather is not None:
             answer = await answer_weather(self._delegate, weather, text)
             self._last_turn_all_failed = False
@@ -228,6 +248,10 @@ class CodexSubscriptionVoiceBrain:
         request = BrainRequest(
             messages=messages,
             system=subscription_language_directive(language) + (
+                " Verified device clock at the start of this turn: "
+                + datetime.now().astimezone().isoformat(timespec="seconds")
+                + ". Use this for current local time and date questions; do not say the clock is unavailable. "
+            ) + (
                 " You are Jarvis, using the connected ChatGPT subscription. "
                 "This turn is text-only: you cannot execute actions, inspect the device, "
                 "read private data, or search live information. Never claim you did so. "
