@@ -1,4 +1,4 @@
-"""Key-free, read-only daily weather for explicit English voice questions.
+"""Key-free, read-only daily weather for explicit English and Dutch voice questions.
 
 Data and geocoding: https://open-meteo.com/en/docs (CC BY 4.0 attribution).
 Only fixed public service hosts are contacted; no user-provided URL is used.
@@ -21,6 +21,10 @@ _QUESTION = re.compile(
 
 
 def weather_request(text: str) -> dict | None:
+    text = re.sub(r"^(?:goedenavond|goedemorgen|goedemiddag|hallo|hoi|jarvis)[\s,.!]*", "", text.strip(), flags=re.I)
+    text = re.sub(r"^(?:wat is|hoe is|wat wordt|hoe wordt) het weer", "What is the weather", text, flags=re.I)
+    text = re.sub(r"\bvandaag\b", "today", text, flags=re.I)
+    text = re.sub(r"\bmorgen\b", "tomorrow", text, flags=re.I)
     match = _QUESTION.fullmatch(text.strip())
     if not match:
         return None
@@ -108,3 +112,18 @@ async def answer_weather(delegate, args: dict, utterance: str) -> str:
     if not result.success:
         return 'I could not retrieve live weather right now. Please try again later.'
     return str(result.output['answer'])
+
+
+def weather_without_city(text: str) -> dict | None:
+    """Ask for a city only for a complete, supported daily weather request."""
+    return weather_request(text.rstrip(" .?!") + " in Placeholder")
+
+
+def weather_city_reply(text: str) -> str | None:
+    """Accept a short city answer only while a weather clarification is pending."""
+    city = re.sub(r"^(?:in|voor|for)\s+", "", text.strip(), flags=re.I).strip(" .?!")
+    if not re.fullmatch(r"[\w'’-]+(?:[ -][\w'’-]+){0,3}", city) or len(city) < 2:
+        return None
+    if re.search(r"\b(?:nee|no|stop|cancel|laat|maar|bedankt|thanks|tijd|time|hoe|wat|what|how|forget)\b", city, re.I):
+        return None
+    return city

@@ -63,3 +63,22 @@ async def test_weather_uses_executor_and_neither_model(question, day):
 async def test_missing_executor_does_not_request_api_key():
     answer=await weather.answer_weather(object(),{'city':'Rotterdam','day':'today'},'weather')
     assert 'not ready' in answer and 'API' not in answer
+
+@pytest.mark.asyncio
+async def test_dutch_weather_clarification_and_cancellation():
+    calls=[]
+    class Executor:
+        async def execute(self, tool, args, **kwargs):
+            calls.append(args)
+            return ToolResult(True, {'answer':'Verified forecast.'})
+    brain=CodexSubscriptionVoiceBrain(SimpleNamespace(_tool_executor_ref=Executor()), SimpleNamespace())
+    assert 'Which city' in await brain.generate('Wat is het weer morgen?')
+    assert await brain.generate('Rotterdam.') == 'Verified forecast.'
+    assert calls == [{'city':'Rotterdam','day':'tomorrow'}]
+    assert brain._pending_weather_day is None
+    assert weather.weather_city_reply('Nee bedankt') is None
+    assert weather.weather_city_reply('Hoe laat is het?') is None
+
+@pytest.mark.parametrize('text,day', [('Wat is het weer vandaag in Rotterdam?', 'today'), ('Hoe wordt het weer in Rotterdam morgen?', 'tomorrow')])
+def test_dutch_daily_weather(text,day):
+    assert weather.weather_request(text)=={'city':'Rotterdam','day':day}
