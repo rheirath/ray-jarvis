@@ -573,6 +573,7 @@ class FasterWhisperProvider:
     """Local Whisper STT via faster-whisper (CTranslate2 backend)."""
 
     name = "faster-whisper"
+    runs_on_device = True
     supports_streaming = False  # we can add stream_transcribe later
 
     def __init__(
