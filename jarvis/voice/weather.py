@@ -13,7 +13,8 @@ from jarvis.core.protocols import ToolResult
 
 _QUESTION = re.compile(
     r"^(?:(?:here|okay|ok|hello|hey|jarvis)[\s,.!]*)*"
-    r"(?:what(?:'s| is)|how(?:'s| is)) (?:the )?weather(?: like)?"
+    r"(?:(?:what(?:'s| is)|how(?:'s| is)) (?:the )?weather"
+    r"|(?:what|how) will (?:the )?weather be)(?: like)?"
     r"(?: (today|tomorrow))? in ([\w\s,'’.-]{2,80}?)"
     r"(?: (today|tomorrow))?[?.!]*$", re.IGNORECASE,
 )
