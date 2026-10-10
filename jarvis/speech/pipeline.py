@@ -16,6 +16,7 @@ import enum
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -15128,6 +15129,15 @@ class SpeechPipeline:
         seconds = max(0.0, float(getattr(self, "_post_tts_listen_suppression_s", 0.0)))
         if seconds <= 0.0:
             return
+        # A blocking audio write returns when samples enter the device buffer,
+        # not when the speaker finishes. Keep captured frames suppressed through
+        # that measured buffer delay, then apply the configured acoustic tail.
+        try:
+            latency = float(getattr(getattr(self, "_player", None), "output_latency_s", 0.0))
+        except (TypeError, ValueError):
+            latency = 0.0
+        if math.isfinite(latency) and latency > 0:
+            seconds += min(latency, 5.0)
         until_ns = time.time_ns() + int(seconds * 1_000_000_000)
         previous = getattr(self, "_input_suppressed_until_ns", 0)
         self._input_suppressed_until_ns = max(previous, until_ns)
