@@ -209,6 +209,17 @@ class CodexSubscriptionVoiceBrain:
             yield answer
             return
 
+        from jarvis.voice.subscription_search import wants_search, answer_search
+        if wants_search(text):
+            answer = await answer_search(self._delegate, self._config, text)
+            self._last_turn_all_failed = False
+            self._last_turn_suppressed = False
+            self._last_turn_executed_action_tool = False
+            self._history.extend([BrainMessage("user", text), BrainMessage("assistant", answer)])
+            self._history = self._history[-_MAX_HISTORY_MESSAGES:]
+            yield answer
+            return
+
         context = tuple(
             _routing_text(str(message.content))
             for message in self._history[-_MAX_HISTORY_MESSAGES:]
