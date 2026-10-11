@@ -17,6 +17,7 @@ import { VoiceGlow } from "@/components/home/VoiceGlow";
 import { useSpokenCursor } from "@/components/home/useSpokenCursor";
 import { TurnSteps, traceWorthShowing } from "@/components/home/TurnSteps";
 import { traceModel } from "@/lib/thinkingSteps";
+import { DutchSubtitle } from "@/components/home/DutchSubtitle";
 
 /**
  * The voice stage — the front page's chat, spoken (2026-10-01, after the
@@ -216,7 +217,7 @@ function TranscriptLine({
           live && !reading && (user ? "opacity-70" : "text-muted-foreground"),
         )}
       >
-        {reading ? (
+        {!user ? <DutchSubtitle text={text} live={live} /> : reading ? (
           <>
             <span data-testid="spoken-part">{text.slice(0, spoken)}</span>
             <span className="text-muted-foreground transition-colors" data-testid="unspoken-part">
