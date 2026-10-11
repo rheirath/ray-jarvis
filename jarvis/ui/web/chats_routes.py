@@ -47,6 +47,32 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
 
+
+class VoiceSubtitleRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+
+
+@router.post("/voice-subtitle")
+async def voice_subtitle(body: VoiceSubtitleRequest, request: Request) -> dict[str, str]:
+    """Translate display text only; never alter the authoritative spoken track."""
+    from jarvis.voice.subscription_profile import subscription_voice_selected
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+    if not subscription_voice_selected(cfg):
+        raise HTTPException(409, "Subscription voice is not selected")
+    translator = getattr(request.app.state, "voice_subtitle_translator", None)
+    if translator is None:
+        from jarvis.voice.display_translation import DisplayTranslator
+        from jarvis.plugins.brain.codex import CodexBrain
+        translator = DisplayTranslator(CodexBrain(
+            prefer_subscription=True, persistent_subscription_transport=True,
+        ))
+        request.app.state.voice_subtitle_translator = translator
+    try:
+        return {"text": await translator.translate(body.text), "language": "nl"}
+    except Exception:
+        log.warning("Voice subtitle translation failed; no paid fallback used.")
+        raise HTTPException(503, "Subtitle translation unavailable") from None
+
 # How many trailing turns to seed into the brain when resuming/speaking. The
 # brain caps its own buffer too (BrainManager._HISTORY_MAX); this keeps the
 # payload small for very long voice sessions.
