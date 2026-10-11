@@ -164,7 +164,7 @@ async def test_subscription_failure_never_uses_provider_chain() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [
     "I do this.", "Open Chrome now.", "Use the connected service for this request.",
-    "Which plugins are installed?", "What is the latest news?", "Read my email.",
+    "Which plugins are installed?", "Explain how a rainbow forms.", "Read my email.",
 ])
 async def test_subscription_profile_never_enters_api_action_chain(text):
     requests = []
