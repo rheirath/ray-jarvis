@@ -223,20 +223,30 @@ class CodexSubscriptionVoiceBrain:
                 stream=True,
             )
             parts = []
-            try:
-                async for delta in self._subscription.complete(request):
-                    if delta.content:
-                        parts.append(delta.content)
-            except Exception:
-                log.warning("Search speech summary failed; no raw evidence or API fallback spoken.")
-                parts = []
-            answer = "".join(parts).strip() or "I could not prepare the search result for speech. Please try again."
             self._last_turn_all_failed = False
             self._last_turn_suppressed = False
             self._last_turn_executed_action_tool = False
+            try:
+                async for delta in self._subscription.complete(request):
+                    if on_progress is not None:
+                        on_progress()
+                    if delta.content:
+                        parts.append(delta.content)
+                        # Let the pipeline synthesize complete sentences while
+                        # the remaining summary is still being generated.
+                        yield delta.content
+            except Exception:
+                log.warning("Search speech summary failed; no raw evidence or API fallback spoken.")
+                self._last_turn_all_failed = True
+                if parts:
+                    # Never replay a partial response or store it as complete.
+                    raise
+            answer = "".join(parts).strip()
+            if not answer:
+                answer = "I could not prepare the search result for speech. Please try again."
+                yield answer
             self._history.extend([BrainMessage("user", text), BrainMessage("assistant", answer)])
             self._history = self._history[-_MAX_HISTORY_MESSAGES:]
-            yield answer
             return
 
         context = tuple(
