@@ -38,7 +38,7 @@ def search_answer(output: str) -> str:
             answers.append(item.get('text', ''))
         elif kind not in {'reasoning'}:
             raise ValueError('Unexpected search tool')
-    answer = '\n'.join(answers).strip()
+    answer = answers[-1].strip() if answers else ''
     if not searched or not re.search(r'https://[^\s<>]+', answer):
         raise ValueError('Search evidence missing')
     return answer
