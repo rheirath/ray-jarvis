@@ -57,3 +57,40 @@ def test_only_last_search_answer_is_spoken():
             {'type':'item.completed','item':{'type':'agent_message','text':'Checking. Repeated result.'}},
             {'type':'item.completed','item':{'type':'agent_message','text':'Final result https://example.org'}}]
     assert search_answer('\n'.join(json.dumps(e) for e in events))=='Final result https://example.org'
+
+@pytest.mark.asyncio
+async def test_summary_first_sentence_arrives_before_generation_finishes():
+    class Executor:
+        async def execute(self, *args, **kwargs):
+            return ToolResult(True, {'answer': 'Evidence https://example.org'})
+    finished = []
+    class Summary:
+        async def complete(self, request):
+            yield BrainDelta(content='First sentence. ')
+            finished.append(True)
+            yield BrainDelta(content='Second sentence.')
+    brain = CodexSubscriptionVoiceBrain(SimpleNamespace(_tool_executor_ref=Executor()), SimpleNamespace())
+    brain._subscription = Summary()
+    stream = brain.generate_stream('Search online for news')
+    assert await anext(stream) == 'First sentence. '
+    assert not finished
+    assert [part async for part in stream] == ['Second sentence.']
+    assert brain._history[-1].content == 'First sentence. Second sentence.'
+
+@pytest.mark.asyncio
+async def test_failed_partial_summary_is_not_replayed_or_saved():
+    class Executor:
+        async def execute(self, *args, **kwargs):
+            return ToolResult(True, {'answer': 'Evidence https://example.org'})
+    class Summary:
+        async def complete(self, request):
+            yield BrainDelta(content='Partial sentence. ')
+            raise RuntimeError('Disconnected')
+    brain = CodexSubscriptionVoiceBrain(SimpleNamespace(_tool_executor_ref=Executor()), SimpleNamespace())
+    brain._subscription = Summary()
+    stream = brain.generate_stream('Search online for news')
+    assert await anext(stream) == 'Partial sentence. '
+    with pytest.raises(RuntimeError, match='Disconnected'):
+        await anext(stream)
+    assert not brain._history
+    assert brain._last_turn_all_failed
